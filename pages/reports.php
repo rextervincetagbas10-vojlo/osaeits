@@ -1,0 +1,285 @@
+<?php
+session_start();
+require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/auth-check.php';
+require_once __DIR__ . '/../includes/quarter-report.php';
+
+$page_title = 'Reports';
+$current_page = 'reports';
+$base_url = '../';
+
+$report_generated_at = osaeits_report_generated_at();
+
+[$defaultYear, $defaultQuarter] = osaeits_current_quarter();
+$selectedYear = (int)($_GET['quarter_year'] ?? $defaultYear);
+$selectedQuarter = (int)($_GET['quarter_num'] ?? $defaultQuarter);
+if ($selectedYear < 2000 || $selectedYear > 2100) $selectedYear = $defaultYear;
+if ($selectedQuarter < 1 || $selectedQuarter > 4) $selectedQuarter = $defaultQuarter;
+
+[$date_from, $date_to] = osaeits_quarter_bounds($selectedYear, $selectedQuarter);
+$quarterLabel = osaeits_quarter_label($selectedYear, $selectedQuarter);
+$periodLine = "Reporting period: {$quarterLabel} ({$date_from} to {$date_to})";
+
+$serviceableEquipmentStmt = $pdo->prepare(
+    "SELECT name, description, location, purok_area, appropriation, person_incharge
+     FROM equipment
+     WHERE LOWER(TRIM(status)) IN ('servicable', 'serviceable', 'available', 'in_use', 'maintenance')
+     ORDER BY name ASC"
+);
+$serviceableEquipmentStmt->execute();
+$serviceable_equipment_items = $serviceableEquipmentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$unserviceableEquipmentStmt = $pdo->prepare(
+    "SELECT name, description, location, purok_area, appropriation, person_incharge
+     FROM equipment
+     WHERE LOWER(TRIM(status)) IN ('unservicable', 'unserviceable', 'retired')
+     ORDER BY name ASC"
+);
+$unserviceableEquipmentStmt->execute();
+$unserviceable_equipment_items = $unserviceableEquipmentStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$inventoryStmt = $pdo->prepare(
+    "SELECT t.created_at, t.item_type, t.transaction_type, t.quantity, t.unit_price, t.total_amount,
+            s.name AS supply_name, e.name AS equipment_name, e.serial_number AS equipment_serial
+     FROM transactions t
+     LEFT JOIN supplies s ON t.item_type = 'supply' AND t.item_id = s.id
+     LEFT JOIN equipment e ON t.item_type = 'equipment' AND t.item_id = e.id
+     WHERE DATE(t.created_at) BETWEEN ? AND ?
+     ORDER BY t.created_at DESC, t.id DESC"
+);
+$inventoryStmt->execute([$date_from, $date_to]);
+$inventory_items = $inventoryStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$treasurerStmt = $pdo->prepare(
+    "SELECT first_name, middle_name, last_name, suffix
+     FROM barangay_officials
+     WHERE status = 'active'
+       AND LOWER(position_title) LIKE '%treasurer%'
+     ORDER BY term_end IS NULL DESC, term_end DESC, id DESC
+     LIMIT 1"
+);
+$treasurerStmt->execute();
+$treasurer = $treasurerStmt->fetch(PDO::FETCH_ASSOC);
+
+$captainStmt = $pdo->prepare(
+    "SELECT first_name, middle_name, last_name, suffix
+     FROM barangay_officials
+     WHERE status = 'active'
+       AND (
+            LOWER(position_title) LIKE '%barangay captain%'
+            OR LOWER(position_title) LIKE '%punong barangay%'
+            OR LOWER(position_title) LIKE '%captain%'
+       )
+     ORDER BY term_end IS NULL DESC, term_end DESC, id DESC
+     LIMIT 1"
+);
+$captainStmt->execute();
+$captain = $captainStmt->fetch(PDO::FETCH_ASSOC);
+
+$officialName = static function (mixed $row, string $fallback): string {
+    if (!$row) return $fallback;
+    $parts = [
+        trim((string)($row['first_name'] ?? '')),
+        trim((string)($row['middle_name'] ?? '')),
+        trim((string)($row['last_name'] ?? '')),
+    ];
+    $name = trim(implode(' ', array_filter($parts, static fn($v) => $v !== '')));
+    $suffix = trim((string)($row['suffix'] ?? ''));
+    if ($suffix !== '') $name .= ', ' . $suffix;
+    return $name !== '' ? $name : $fallback;
+};
+
+$preparedByName = $officialName($treasurer, 'Treasurer');
+$notedByName = $officialName($captain, 'Barangay Captain');
+
+require_once __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/sidebar.php';
+require_once __DIR__ . '/../includes/topbar.php';
+?>
+
+<div class="card shadow mb-4">
+    <div class="card-header py-3 d-flex justify-content-between align-items-center no-print">
+        <h6 class="m-0 font-weight-bold text-primary">Statement of Turn Over of Accountability</h6>
+        <div class="no-print">
+            <a href="reports.php?quarter_year=<?= (int)$defaultYear ?>&quarter_num=<?= (int)$defaultQuarter ?>" class="btn btn-outline-secondary btn-sm mr-1">Current quarter</a>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="window.print()">
+                <i class="fas fa-print"></i> Print Statement
+            </button>
+        </div>
+    </div>
+    <div class="card-body statement-report">
+        <form method="get" class="mb-3 pb-3 border-bottom no-print">
+            <div class="form-row align-items-end">
+                <div class="form-group col-md-2">
+                    <label class="small mb-1">Year</label>
+                    <select name="quarter_year" class="form-control form-control-sm">
+                        <?php for ($y = (int)date('Y') + 1; $y >= (int)date('Y') - 5; $y--): ?>
+                            <option value="<?= $y ?>" <?= $y === $selectedYear ? 'selected' : '' ?>><?= $y ?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div class="form-group col-md-3">
+                    <label class="small mb-1">Quarter</label>
+                    <select name="quarter_num" class="form-control form-control-sm">
+                        <?php for ($q = 1; $q <= 4; $q++): ?>
+                            <option value="<?= $q ?>" <?= $q === $selectedQuarter ? 'selected' : '' ?>>Q<?= $q ?> (<?= ['Jan–Mar', 'Apr–Jun', 'Jul–Sep', 'Oct–Dec'][$q - 1] ?>)</option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div class="form-group col-md-4">
+                    <button type="submit" class="btn btn-primary btn-sm">Generate Quarterly Report</button>
+                </div>
+            </div>
+            <p class="small text-muted mb-0">This report is generated from Inventory (transactions), Supplies, and Equipment records within the selected calendar quarter.</p>
+        </form>
+
+        <div class="text-center mb-3 d-none d-print-block">
+            <div class="small">Republic of the Philippines</div>
+            <div class="small font-weight-bold text-uppercase">Province of Zamboanga del Norte</div>
+            <div class="small font-weight-bold text-uppercase">Barangay Piao</div>
+            <div class="font-weight-bold mt-2 text-uppercase">Statement of Turn Over of Accountability</div>
+            <div class="small">as of <?= htmlspecialchars(date('F Y', strtotime($date_to))) ?></div>
+            <div class="small mt-1"><?= htmlspecialchars($periodLine) ?></div>
+            <div class="small mt-1 font-weight-bold">Generated: <?= htmlspecialchars($report_generated_at) ?></div>
+        </div>
+
+        <div class="table-responsive no-mobile-cardview mb-4">
+            <table class="table table-bordered table-sm statement-table">
+                <thead class="thead-light">
+                    <tr><th colspan="8" class="text-left">SERVICEABLE ITEMS</th></tr>
+                    <tr>
+                        <th width="40">Item No.</th>
+                        <th>Items &amp; Description</th>
+                        <th width="70">Quantity</th>
+                        <th width="70">Unit</th>
+                        <th width="110">Purok/Area</th>
+                        <th>Appropriation</th>
+                        <th width="130">Person Incharge</th>
+                        <th width="110">Remarks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($serviceable_equipment_items)): ?>
+                        <tr><td colspan="8" class="text-center text-muted">No serviceable equipment found.</td></tr>
+                    <?php else: ?>
+                        <?php foreach ($serviceable_equipment_items as $idx => $it): ?>
+                            <tr>
+                                <td><?= (int)($idx + 1) ?></td>
+                                <td>
+                                    <strong><?= htmlspecialchars($it['name']) ?></strong>
+                                    <div class="small text-muted">Equipment</div>
+                                    <?php if (!empty($it['description'])): ?><div class="small text-muted"><?= htmlspecialchars($it['description']) ?></div><?php endif; ?>
+                                </td>
+                                <td>1</td>
+                                <td>unit</td>
+                                <td><?= htmlspecialchars(($it['purok_area'] ?: $it['location']) ?: '-') ?></td>
+                                <td><?= htmlspecialchars($it['appropriation'] ?: '-') ?></td>
+                                <td><?= htmlspecialchars($it['person_incharge'] ?: '-') ?></td>
+                                <td>Serviceable</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="table-responsive no-mobile-cardview">
+            <table class="table table-bordered table-sm statement-table">
+                <thead class="thead-light">
+                    <tr><th colspan="8" class="text-left">UNSERVICEABLE ITEMS</th></tr>
+                    <tr>
+                        <th width="40">Item No.</th>
+                        <th>Items &amp; Description</th>
+                        <th width="70">Quantity</th>
+                        <th width="70">Unit</th>
+                        <th width="110">Purok/Area</th>
+                        <th>Appropriation</th>
+                        <th width="130">Person Incharge</th>
+                        <th width="110">Remarks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($unserviceable_equipment_items)): ?>
+                        <tr><td colspan="8" class="text-center text-muted">No unserviceable equipment found.</td></tr>
+                    <?php else: ?>
+                        <?php foreach ($unserviceable_equipment_items as $idx => $it): ?>
+                            <tr>
+                                <td><?= (int)($idx + 1) ?></td>
+                                <td>
+                                    <strong><?= htmlspecialchars($it['name']) ?></strong>
+                                    <div class="small text-muted">Equipment</div>
+                                    <?php if (!empty($it['description'])): ?><div class="small text-muted"><?= htmlspecialchars($it['description']) ?></div><?php endif; ?>
+                                </td>
+                                <td>1</td>
+                                <td>unit</td>
+                                <td><?= htmlspecialchars(($it['purok_area'] ?: $it['location']) ?: '-') ?></td>
+                                <td><?= htmlspecialchars($it['appropriation'] ?: '-') ?></td>
+                                <td><?= htmlspecialchars($it['person_incharge'] ?: '-') ?></td>
+                                <td>Unserviceable</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="table-responsive no-mobile-cardview mt-4">
+            <table class="table table-bordered table-sm statement-table">
+                <thead class="thead-light">
+                    <tr><th colspan="8" class="text-left">INVENTORY TRANSACTIONS (QUARTERLY)</th></tr>
+                    <tr>
+                        <th width="145">Date</th>
+                        <th>Item</th>
+                        <th width="95">Item Type</th>
+                        <th width="110">Transaction</th>
+                        <th width="75">Quantity</th>
+                        <th width="95">Unit Price</th>
+                        <th width="95">Total</th>
+                        <th width="90">Remarks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($inventory_items)): ?>
+                        <tr><td colspan="8" class="text-center text-muted">No inventory transactions found for this quarter.</td></tr>
+                    <?php else: ?>
+                        <?php foreach ($inventory_items as $it): ?>
+                            <?php
+                                $itemName = ($it['item_type'] === 'supply')
+                                    ? ($it['supply_name'] ?? 'Supply')
+                                    : ($it['equipment_name'] ?? 'Equipment');
+                                if ($it['item_type'] === 'equipment' && !empty($it['equipment_serial'])) {
+                                    $itemName .= ' (' . $it['equipment_serial'] . ')';
+                                }
+                            ?>
+                            <tr>
+                                <td><?= htmlspecialchars(date('M j, Y H:i', strtotime($it['created_at']))) ?></td>
+                                <td><?= htmlspecialchars($itemName) ?></td>
+                                <td><?= htmlspecialchars(ucfirst((string)$it['item_type'])) ?></td>
+                                <td><?= htmlspecialchars(ucfirst((string)$it['transaction_type'])) ?></td>
+                                <td><?= (int)$it['quantity'] ?></td>
+                                <td>₱<?= number_format((float)$it['unit_price'], 2) ?></td>
+                                <td>₱<?= number_format((float)$it['total_amount'], 2) ?></td>
+                                <td>-</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-none d-print-flex justify-content-between mt-5 px-4">
+            <div class="text-center" style="min-width: 240px;">
+                <div style="margin-bottom: 15px; font-size: 12px;">Prepared by:</div>
+                <div class="border-top border-dark pt-1 font-weight-bold text-uppercase" style="font-size: 12px;"><?= htmlspecialchars($preparedByName) ?></div>
+                <div style="font-size: 11px;">Treasurer</div>
+            </div>
+            <div class="text-center" style="min-width: 240px;">
+                <div style="margin-bottom: 15px; font-size: 12px;">Noted by:</div>
+                <div class="border-top border-dark pt-1 font-weight-bold text-uppercase" style="font-size: 12px;"><?= htmlspecialchars($notedByName) ?></div>
+                <div style="font-size: 11px;">Barangay Captain</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<?php require_once __DIR__ . '/../includes/footer.php'; ?>
