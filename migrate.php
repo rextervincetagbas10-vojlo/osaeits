@@ -8,7 +8,7 @@ ini_set('display_errors', 1);
 
 // --- COOLIFY CONFIGURATION ---
 $db_host = 'tswkc0kg0wg4s0cc0g40woo8'; 
-$db_name = 'osaeits_db';
+$db_name = 'default';
 $db_user = 'mysql'; // Note: Your connection string uses 'mysql' as the user
 $db_pass = 'OziCKHrZSWAh5fXpv10n1r4ltO4xLGcsFoI7NEWs3KdLFtrFKZZKfV2FAjsOqZrO';
 
