@@ -6,10 +6,11 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-$db_host = 'localhost';
+// --- COOLIFY CONFIGURATION ---
+$db_host = 'tswkc0kg0wg4s0cc0g40woo8'; 
 $db_name = 'osaeits_db';
-$db_user = 'root';
-$db_pass = '';
+$db_user = 'mysql'; // Note: Your connection string uses 'mysql' as the user
+$db_pass = 'OziCKHrZSWAh5fXpv10n1r4ltO4xLGcsFoI7NEWs3KdLFtrFKZZKfV2FAjsOqZrO';
 
 try {
     $pdo = new PDO("mysql:host=$db_host;charset=utf8mb4", $db_user, $db_pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
