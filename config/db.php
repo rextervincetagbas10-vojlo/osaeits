@@ -2,10 +2,10 @@
 /**
  * Database connection - simple PDO
  */
-$db_host = 'localhost';
+$db_host = 'tswkc0kg0wg4s0cc0g40woo8'; 
 $db_name = 'osaeits_db';
-$db_user = 'root';
-$db_pass = '';
+$db_user = 'mysql'; // Note: Your connection string uses 'mysql' as the user
+$db_pass = 'OziCKHrZSWAh5fXpv10n1r4ltO4xLGcsFoI7NEWs3KdLFtrFKZZKfV2FAjsOqZrO';
 
 try {
     $pdo = new PDO(
